@@ -1,0 +1,11 @@
+# TODO(T1-12): Node-Service mit build-Kontext auf dieses Verzeichnis definieren.
+# TCP-Port 18018:18018 veröffentlichen; der Prozess muss im Container auf
+# 0.0.0.0:18018 lauschen. Keine interaktiven Schritte oder manuell gestarteten
+# Begleitprozesse voraussetzen: docker-compose build && docker-compose up -d
+# muss aus einem frisch entpackten Archiv einen erreichbaren Node starten.
+# TODO(T1-12): Benanntes Volume für die Peer-Datei einbinden und den Datenpfad
+# mit config abstimmen. Peer-Liste muss Container-Neustarts überleben. Keine
+# vorbefüllten Transaktionen/Blöcke aus der Entwicklung in das Image aufnehmen;
+# ein frischer Grader-Start enthält höchstens Genesis, falls überhaupt gespeichert.
+# Grader beendet mit docker-compose down -v; danach darf ein sauberer Neustart
+# nicht von alten lokalen Daten oder absoluten Windows-Pfaden abhängen.
