@@ -108,7 +108,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
             if msg["type"] == "getpeers":
                 response = {
                     "type": "peers",
-                    "peers": []
+                    "peers": [] 
                 }
                 await sendMessage(writer, response)
             
