@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from config import HOST, PORT, errorType
-from protocol import error_msg, sendMessage, validate_hello
+from protocol import error_msg, sendMessage, validate_hello, validate_message
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -49,8 +49,9 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # jeweils return. Aktuell fehlt writer; ohne return würde msg trotz
             # Parsefehler weiterverwendet (undefiniert oder aus der vorigen Nachricht).
             if not data.endswith(b"\n"):
-                    await error_msg(errorType.INV_FORM, 
+                    await error_msg(writer, errorType.INV_FORM, 
                         "JSON string must end with new line.")
+                    return
             try:
                 # TODO(T1-02): Strikten JSON-Parser verwenden: NaN/Infinity über
                 # parse_constant zurückweisen und als INVALID_FORMAT behandeln.
@@ -60,11 +61,13 @@ async def handle_incoming(reader: asyncio.StreamReader,
                 msg = json.loads(data.decode())
                 log.info("Message from %s: %s", peer_id, msg)
             except UnicodeDecodeError:                
-                await error_msg(errorType.INV_FORM, 
+                await error_msg(writer, errorType.INV_FORM, 
                         "JSON string could not be decoded.")
+                return
             except json.JSONDecodeError:                
-                await error_msg(errorType.INV_FORM, 
+                await error_msg(writer, errorType.INV_FORM, 
                         "JSON string could not be loaded correctly.")
+                return
                 
             if not hello_received:
                 # Die Reihenfolge hängt vom Verbindungszustand ab und gehört
@@ -92,16 +95,31 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # Andere bekannte Typen (z.B. getchaintip/object) nach dem Handshake
             # für Task 1 weiter ignorieren; keine Blockchain-Validierung ergänzen.
             # Empfangene error-Nachrichten höchstens loggen, keine Antwortschleife.
+            if not validate_message(msg):
+                await error_msg(writer, errorType.INV_FORM, "Invalid message format.")
+                return
+
             # TODO(T1-05): Gültiges getpeers nur diesem writer mit peers beantworten.
             # Eigene konfigurierte Listening-Adresse zuerst, insgesamt <=30 Einträge
             # inklusive eigener Adresse. Deduplizieren und für größere Bestände eine
             # Auswahlregel festlegen (z.B. zufällige Auswahl der übrigen Plätze).
             # Bei kleinem Bestand alle passenden bekannten Adressen weitergeben;
             # nie die ephemeren Quellports aus dem aktiven peers-Dictionary anbieten.
+            if msg["type"] == "getpeers":
+                response = {
+                    "type": "peers",
+                    "peers": []
+                }
+                await sendMessage(writer, response)
+            
             # TODO(T1-06): Gültige peers-Nachricht vollständig validieren, dann den
             # Adressbestand aktualisieren und persistieren (T1-07). Auch freiwillig
             # gesendete peers verarbeiten. Bei einem ungültigen Eintrag nichts
             # übernehmen: INVALID_FORMAT senden, Verbindung schließen.
+            if msg["type"] == "peers":
+                print("Debug: peers bekommen", msg["peers"])
+
+
     # TODO(T1-03): TimeoutError abfangen: INVALID_HANDSHAKE mit Erklärung senden,
     # danach Handler beenden. Die Deadline/Abschaltung ist vorhanden; die Antwort
     # fehlt noch. TimeoutError vor OSError behandeln, da es davon abgeleitet ist.
@@ -158,9 +176,9 @@ async def main(listen_port: int, known_peers: list[tuple[str, int]]) -> None:
     server = await asyncio.start_server(
         # TODO(T1-10): Hier und im folgenden Log PORT durch listen_port ersetzen.
         # Container muss auf 0.0.0.0:18018 lauschen (Konfiguration siehe config.py).
-        handle_incoming, HOST, PORT
+        handle_incoming, HOST, listen_port
     )
-    log.info("P2P node listening on %s:%d", HOST, PORT)
+    log.info("P2P node listening on %s:%d", HOST, listen_port)
 
     # TODO(T1-09): Die einmalige Schleife durch eine laufende Verbindungspflege
     # ergänzen: wenige ausgehende Verbindungen als Ziel festlegen, neue bekannte
