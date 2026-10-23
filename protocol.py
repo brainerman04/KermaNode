@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from config import errorType
+import ipaddress
 
 # TODO(T1-04): Validatoren für Task-1-Nachrichten ergänzen und aus network aufrufen.
 # Basis: dict, type als String, bekannter Nachrichtentyp. getpeers hat exakt {type};
@@ -69,3 +70,100 @@ async def error_msg(writer: asyncio.StreamWriter, err_type: errorType, explanati
         "name": err_type.value,
         "msg": explanation,
     })
+
+def validate_message(msg: object) -> bool:
+    if not isinstance(msg, dict):
+        return False
+
+    if "type" not in msg:
+        return False
+
+    if not isinstance(msg["type"], str):
+        return False
+
+    allowed_types = {
+        "hello",
+        "getpeers",
+        "peers",
+        "getobject",
+        "ihaveobject",
+        "object",
+        "getchaintip",
+        "chaintip",
+        "getmempool",
+        "mempool",
+        "error"
+    }
+
+    if msg["type"] not in allowed_types:
+        return False
+
+    if msg["type"] == "getpeers":
+        if set(msg.keys()) != {"type"}:
+            return False
+
+    if msg["type"] == "peers":
+        if set(msg.keys()) != {"type", "peers"}:
+            return False
+            
+        if not isinstance(msg["peers"], list):
+            return False
+
+        if len(msg["peers"]) > 30:
+            return False
+
+        for peer in msg["peers"]:
+            if not isinstance(peer, str):
+                return False
+
+            if not validate_peer_address(peer):
+                return False
+    return True
+
+def validate_peer_address(address: str) -> bool:
+    if not isinstance(address, str):
+        return False
+    
+    if ":" not in address:
+        return False
+
+    parts = address.split(":")
+
+    if len(parts) != 2:
+        return False
+
+    host = parts[0]
+    port = parts[1]
+
+    if not port.isdigit() or not port.isascii():
+        return False
+
+    port_number = int(port)
+
+    if port_number < 1 or port_number > 65535:
+        return False
+
+    try:
+        ip = ipaddress.IPv4Address(host)
+
+        if ip.is_global:
+            return True
+        else:
+            return False
+        
+    except ipaddress.AddressValueError:
+        host_length = len(host)
+        if host_length < 3 or host_length > 50:
+            return False
+
+        valid_symbols = re.fullmatch(r"[a-zA-Z0-9._-]+", host)
+        if not valid_symbols:
+            return False
+
+        if "." not in host[1:-1]:
+            return False
+
+        if re.search(r"[a-zA-Z]+", host):
+            return True
+
+    return False
