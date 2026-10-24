@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from config import HOST, PORT, errorType
+from config import HOST, PORT, errorType, PUBLIC_HOST
 from protocol import error_msg, sendMessage, validate_hello, validate_message
 from dataclasses import dataclass
 from peer_manager import PeerManager
@@ -108,9 +108,17 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # Bei kleinem Bestand alle passenden bekannten Adressen weitergeben;
             # nie die ephemeren Quellports aus dem aktiven peers-Dictionary anbieten.
             if msg["type"] == "getpeers":
+                if PUBLIC_HOST is not None:
+                    my_address = f"{PUBLIC_HOST}:{PORT}"
+                    known_peers = peer_manager.get_peers(limit=29,exclude=[my_address])
+                    all_peers = [my_address] + known_peers
+                else:
+                    known_peers = peer_manager.get_peers(limit=30)
+                    all_peers = known_peers
+
                 response = {
                     "type": "peers",
-                    "peers": peer_manager.get_peers() 
+                    "peers": all_peers[:30]  # Limit to 30 entries 
                 }
                 await sendMessage(writer, response)
             
