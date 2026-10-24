@@ -5,7 +5,9 @@ import time
 from config import HOST, PORT, errorType
 from protocol import error_msg, sendMessage, validate_hello, validate_message
 from dataclasses import dataclass
+from peer_manager import PeerManager
 
+peer_manager = PeerManager()
 log = logging.getLogger(__name__)
 
 @dataclass
@@ -108,7 +110,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
             if msg["type"] == "getpeers":
                 response = {
                     "type": "peers",
-                    "peers": [] 
+                    "peers": peer_manager.get_peers() 
                 }
                 await sendMessage(writer, response)
             
@@ -117,7 +119,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # gesendete peers verarbeiten. Bei einem ungültigen Eintrag nichts
             # übernehmen: INVALID_FORMAT senden, Verbindung schließen.
             if msg["type"] == "peers":
-                print("Debug: peers bekommen", msg["peers"])
+                await peer_manager.add_and_save(msg["peers"])
 
 
     # TODO(T1-03): TimeoutError abfangen: INVALID_HANDSHAKE mit Erklärung senden,
@@ -173,6 +175,7 @@ async def connect_to_peer(host: str, port: int) -> None:
         log.warning("Peer %s:%d refused connection", host, port)
 
 async def main(listen_port: int, known_peers: list[tuple[str, int]]) -> None:
+    peer_manager.load()  # Load known peers from file
     server = await asyncio.start_server(
         # TODO(T1-10): Hier und im folgenden Log PORT durch listen_port ersetzen.
         # Container muss auf 0.0.0.0:18018 lauschen (Konfiguration siehe config.py).
