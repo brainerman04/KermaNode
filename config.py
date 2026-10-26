@@ -7,6 +7,7 @@ from enum import Enum
 HOST = "0.0.0.0"
 PORT = 18018
 PUBLIC_HOST = None
+BOOTSTRAP_PEERS = ["128.130.122.101:18018"]
 
 # TODO(T1-08): Bootstrap-Liste mit 128.130.122.101:18018 hinterlegen (Task-1-Vorgabe).
 # Beim Start gemeinsam mit dem gespeicherten Adressbestand laden; nicht bei jedem
