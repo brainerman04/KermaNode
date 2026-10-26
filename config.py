@@ -4,8 +4,9 @@ from enum import Enum
 # TODO(T1-10): Für Docker HOST auf 0.0.0.0 setzen; Abgabeport bleibt 18018.
 # Bind-Adresse und öffentlich angebotene Listening-Adresse getrennt konfigurieren:
 # 0.0.0.0/127.0.0.1 sind keine gültigen Einträge in peers-Nachrichten.
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 18018
+PUBLIC_HOST = None
 
 # TODO(T1-08): Bootstrap-Liste mit 128.130.122.101:18018 hinterlegen (Task-1-Vorgabe).
 # Beim Start gemeinsam mit dem gespeicherten Adressbestand laden; nicht bei jedem
