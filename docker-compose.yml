@@ -9,3 +9,16 @@
 # ein frischer Grader-Start enthält höchstens Genesis, falls überhaupt gespeichert.
 # Grader beendet mit docker-compose down -v; danach darf ein sauberer Neustart
 # nicht von alten lokalen Daten oder absoluten Windows-Pfaden abhängen.
+services:
+  kermanode:
+    build: .
+    ports:
+      - "18018:18018"
+    volumes:
+      - peer_data:/app/data
+    environment:
+      - PEERS_FILE=/app/data/peers.json
+    restart: unless-stopped
+
+volumes:
+  peer_data:

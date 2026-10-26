@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+
 import network
 from config import *
 from peer_manager import PeerManager
@@ -8,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 
 if __name__ == "__main__":
 
-    peer_manager = PeerManager()
+    peer_manager = PeerManager(os.getenv("PEERS_FILE", "peers.json"))
     peer_manager.load()
     known_peers = peer_manager.known_peers
 
