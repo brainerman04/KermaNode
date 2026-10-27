@@ -12,6 +12,7 @@ OUTBOUND_TARGET = 3
 CONNECT_TIMEOUT = 5
 RECONNECT_INTERVALL = 10
 PUBLIC_HOST = None
+BOOTSTRAP_PEERS = ["128.130.122.101:18018"]
 
 # TODO(T1-08): Bootstrap-Liste mit 128.130.122.101:18018 hinterlegen (Task-1-Vorgabe).
 # Beim Start gemeinsam mit dem gespeicherten Adressbestand laden; nicht bei jedem
