@@ -8,20 +8,21 @@ from peer_manager import PeerManager
 
 logging.basicConfig(level=logging.INFO)
 
+
 if __name__ == "__main__":
 
-    peer_manager = PeerManager(os.getenv("PEERS_FILE", "peers.json"))
+    # Gemeinsamen PeerManager erstellen
+    peer_manager = PeerManager(
+        os.getenv("PEERS_FILE", "peers.json")
+    )
+
+    # Gespeicherte Peers laden
     peer_manager.load()
-    known_peers = peer_manager.known_peers
 
-    all_peers = set(known_peers)
-    all_peers.update(BOOTSTRAP_PEERS)
+    # Bootstrap-Adressen einmal beim Start hinzufügen
+    peer_manager.add_peers(BOOTSTRAP_PEERS)
 
-    peer_tuples = []
-
-    for address in all_peers:
-        host, port = address.split(":")
-        port = int(port)
-        peer_tuples.append((host, port))
-
-    asyncio.run(network.main(PORT, peer_tuples))
+    # Netzwerk starten
+    asyncio.run(
+        network.main(PORT, peer_manager)
+    )

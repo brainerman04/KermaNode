@@ -25,7 +25,10 @@ async def sendMessage(writer: asyncio.StreamWriter, message: dict) -> None:
     # Gemeinsamer Encoder für Nachrichten und Fehler; genau eine JSON-Zeile je Aufruf.
     payload = (json.dumps(message, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
     writer.write(payload)
-    await writer.drain()
+    await asyncio.wait_for(
+        writer.drain(),
+        timeout=3
+    )
 
 
 async def validate_hello(msg: object, writer: asyncio.StreamWriter) -> bool:
