@@ -1,31 +1,100 @@
-# TODO(T1-07): Manuellen Testclient nach tests/manual_peer.py auslagern und dieses
-# Modul für die Peer-Verwaltung nutzen. Beim Import keine Sockets öffnen.
-# Benötigte Schnittstellen: load/save, add_peers, forget_peer und Auswahl für
-# getpeers-Antworten/ausgehende Verbindungen. Bekannte Adressen als deduplizierten
-# Bestand unabhängig von den aktiven Verbindungen in network halten.
-# TODO(T1-07): Adressen lokal als JSON speichern, beim Neustart wieder einlesen.
-# Änderungen atomar schreiben (temporäre Datei + os.replace); gleichzeitige
-# Änderungen über einen zentralen Manager serialisieren, nicht gegenseitig
-# überschreiben. Laden/Speichern darf die Eventloop nicht länger blockieren.
-# Fehlende Datei als Erststart behandeln; beschädigte/unlesbare Datei kontrolliert
-# loggen und mit definierter Wiederherstellung starten, statt den Node zu beenden.
-# Offline/fehlerhafte ausgehende Peers entfernen und diese Änderung persistieren.
-# Erneute Entdeckung und eingehende Verbindungen derselben Adresse weiter zulassen.
+import json
+import os
+import tempfile
+import asyncio
+import random
+import logging
+from pathlib import Path
+from protocol import validate_peer_address
 
-import socket
+log = logging.getLogger(__name__)
 
-HOST = "127.0.0.1"  # The server's hostname or IP address
-PORT = 18018  # The port used by the server
+class PeerManager:
+    def __init__(self, file_path="peers.json"):
+        self.file_path = file_path
+        self.known_peers = set() # Store known peers without duplicates
+        self.lock = asyncio.Lock()  # Protect peer updates
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s.connect((HOST, PORT))
-    # TODO(T1-13, Testclient): Nach dem Auslagern gültiges hello mit \n senden;
-    # den bisherigen Text mit \n als separaten INVALID_FORMAT-Test behalten.
-    s.sendall(b"Hello, world")
-    # TODO(T1-13, Testclient): Antworten zeilenweise lesen (z.B. makefile("rb")),
-    # nicht ein recv() mit einer vollständigen Nachricht gleichsetzen. Initiales
-    # hello/getpeers von der eigentlichen Testantwort unterscheiden. Socket-Timeout
-    # setzen, damit Testfehler nicht unbegrenzt warten.
-    data = s.recv(1024)
+    # Add new peers
+    def add_peers(self, addresses):
+        for address in addresses:
+            if validate_peer_address(address):
+                self.known_peers.add(address)
 
-print(f"Received {data!r}")
+    # Remove a peer
+    def forget_peer(self, address):
+        self.known_peers.discard(address)
+
+    # Return known peers without excluded addresses
+    def get_peers(self, limit=29, exclude=None):
+        excluded = set(exclude or [])
+        peers = list(self.known_peers - excluded)
+
+        if len(peers) > limit:
+            peers = random.sample(peers, limit)
+
+        return peers
+
+    # Save peers safely to a JSON file
+    def save(self):
+        path = Path(self.file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_path = None
+
+        try:
+            # Write peers to a temporary file
+            with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=path.parent,
+                    delete=False
+            ) as file:
+                temp_path = file.name
+                json.dump(sorted(self.known_peers), file)
+                file.flush()
+                os.fsync(file.fileno())
+
+            # Replace the old file
+            os.replace(temp_path, path)
+
+        finally:
+            # Remove the temporary file if something failed
+            if temp_path is not None and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    # Load peers from a JSON file
+    def load(self):
+        try:
+            with open(self.file_path, "r") as file:
+                addresses = json.load(file)
+
+            if not isinstance(addresses, list):
+                raise ValueError("Invalid peer file")
+
+            if not all(isinstance(address, str) for address in addresses):
+                raise ValueError("Invalid peer addresses")
+
+            self.known_peers = {
+                address for address in addresses
+                if validate_peer_address(address)
+            }
+
+        except FileNotFoundError:
+            self.known_peers = set()  # First start
+
+        except (json.JSONDecodeError, ValueError, OSError) as error:
+            log.warning("Could not load peers: %s", error)
+            self.known_peers = set()
+
+    # Add peers and save changes
+    async def add_and_save(self, addresses):
+        async with self.lock:
+            self.add_peers(addresses)
+            await asyncio.to_thread(self.save)
+
+    # Remove a peer and save changes
+    async def forget_and_save(self, address):
+        async with self.lock:
+            self.forget_peer(address)
+            await asyncio.to_thread(self.save)

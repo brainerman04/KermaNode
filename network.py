@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 import time
-from config import HOST, PORT, MAX_LINE_BYTES, CONNECT_TIMEOUT, errorType
-from protocol import error_msg, sendMessage, validate_hello
+from config import HOST, PORT, MAX_LINE_BYTES, CONNECT_TIMEOUT, errorType, PUBLIC_HOST
+from protocol import error_msg, sendMessage, validate_hello, validate_message
 from dataclasses import dataclass
+from peer_manager import PeerManager
 
+peer_manager = PeerManager()
 log = logging.getLogger(__name__)
 
 def reject_json_constant(value: str) -> None:
@@ -128,16 +130,39 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # Andere bekannte Typen (z.B. getchaintip/object) nach dem Handshake
             # für Task 1 weiter ignorieren; keine Blockchain-Validierung ergänzen.
             # Empfangene error-Nachrichten höchstens loggen, keine Antwortschleife.
+            if not validate_message(msg):
+                await error_msg(writer, errorType.INV_FORM, "Invalid message format.")
+                return
+
             # TODO(T1-05): Gültiges getpeers nur diesem writer mit peers beantworten.
             # Eigene konfigurierte Listening-Adresse zuerst, insgesamt <=30 Einträge
             # inklusive eigener Adresse. Deduplizieren und für größere Bestände eine
             # Auswahlregel festlegen (z.B. zufällige Auswahl der übrigen Plätze).
             # Bei kleinem Bestand alle passenden bekannten Adressen weitergeben;
             # nie die ephemeren Quellports aus dem aktiven peers-Dictionary anbieten.
+            if msg["type"] == "getpeers":
+                if PUBLIC_HOST is not None:
+                    my_address = f"{PUBLIC_HOST}:{PORT}"
+                    known_peers = peer_manager.get_peers(limit=29,exclude=[my_address])
+                    all_peers = [my_address] + known_peers
+                else:
+                    known_peers = peer_manager.get_peers(limit=30)
+                    all_peers = known_peers
+
+                response = {
+                    "type": "peers",
+                    "peers": all_peers[:30]  # Limit to 30 entries 
+                }
+                await sendMessage(writer, response)
+            
             # TODO(T1-06): Gültige peers-Nachricht vollständig validieren, dann den
             # Adressbestand aktualisieren und persistieren (T1-07). Auch freiwillig
             # gesendete peers verarbeiten. Bei einem ungültigen Eintrag nichts
             # übernehmen: INVALID_FORMAT senden, Verbindung schließen.
+            if msg["type"] == "peers":
+                await peer_manager.add_and_save(msg["peers"])
+
+
     # TODO(T1-03): TimeoutError abfangen: INVALID_HANDSHAKE mit Erklärung senden,
     # danach Handler beenden. Die Deadline/Abschaltung ist vorhanden; die Antwort
     # fehlt noch. TimeoutError vor OSError behandeln, da es davon abgeleitet ist.
@@ -217,12 +242,13 @@ async def connect_to_peer(host: str, port: int) -> None:
     )
 
 async def main(listen_port: int, known_peers: list[tuple[str, int]]) -> None:
+    peer_manager.load()  # Load known peers from file
     server = await asyncio.start_server(
         # TODO(T1-10): Hier und im folgenden Log PORT durch listen_port ersetzen.
         # Container muss auf 0.0.0.0:18018 lauschen (Konfiguration siehe config.py).
         handle_incoming, HOST, PORT, limit=MAX_LINE_BYTES
     )
-    log.info("P2P node listening on %s:%d", HOST, PORT)
+    log.info("P2P node listening on %s:%d", HOST, listen_port)
 
     # TODO(T1-09): Die einmalige Schleife durch eine laufende Verbindungspflege
     # ergänzen: wenige ausgehende Verbindungen als Ziel festlegen, neue bekannte
