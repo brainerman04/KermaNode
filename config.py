@@ -6,6 +6,11 @@ from enum import Enum
 # 0.0.0.0/127.0.0.1 sind keine gültigen Einträge in peers-Nachrichten.
 HOST = "127.0.0.1"
 PORT = 18018
+MAX_LINE_BYTES = 1024 * 1024 * 5
+
+OUTBOUND_TARGET = 3
+CONNECT_TIMEOUT = 5
+RECONNECT_INTERVALL = 10
 
 # TODO(T1-08): Bootstrap-Liste mit 128.130.122.101:18018 hinterlegen (Task-1-Vorgabe).
 # Beim Start gemeinsam mit dem gespeicherten Adressbestand laden; nicht bei jedem

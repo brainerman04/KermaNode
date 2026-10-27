@@ -2,11 +2,24 @@ import asyncio
 import json
 import logging
 import time
-from config import HOST, PORT, errorType
+from config import HOST, PORT, MAX_LINE_BYTES, CONNECT_TIMEOUT, errorType
 from protocol import error_msg, sendMessage, validate_hello
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
+
+def reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+async def safe_send_error(writer, err_type, explanation):
+    try:
+        await asyncio.wait_for(
+            error_msg(writer, err_type, explanation),
+            timeout=3
+        )
+
+    except (TimeoutError, OSError):
+        log.warning("Could not deliver error message to peer.")
 
 @dataclass
 class Peer:
@@ -20,14 +33,15 @@ peers: dict[str, Peer] = {}   # "host:port" → Peer
 # eingehende TCP-Quellports gehören nicht in diesen Bestand.
 
 async def handle_incoming(reader: asyncio.StreamReader,
-                           writer: asyncio.StreamWriter) -> None:
+                           writer: asyncio.StreamWriter,
+                           outbound_address=None) -> None:
     # Jede Verbindung hat ihre eigene Deadline und ihren eigenen Handshake-Zustand.
     deadline = time.monotonic() + 20
     hello_received = False
     answer_hello = {"type":"hello","version":"0.10.0","agent":"SuperCoolNodeTeam08"}
     getpeers = {"type": "getpeers"}
     addr = writer.get_extra_info("peername")
-    peer_id = f"{addr[0]}:{addr[1]}"
+    peer_id = outbound_address or f"{addr[0]}:{addr[1]}"
     log.info("[+] Incoming peer: %s", peer_id)
     peers[peer_id] = Peer(addr[0], addr[1], writer)
 
@@ -36,8 +50,20 @@ async def handle_incoming(reader: asyncio.StreamReader,
         await sendMessage(writer, getpeers)
         while True:
             if not hello_received:
-                remaining = deadline - time.monotonic()
-                data = await asyncio.wait_for(reader.readline(), timeout=remaining)
+                remaining = max(0, deadline - time.monotonic())
+                try:
+                    data = await asyncio.wait_for(
+                        reader.readline(),
+                        timeout=remaining
+                    )
+
+                except TimeoutError:
+                    await error_msg(
+                        writer,
+                        errorType.INV_HANDS,
+                        "Hello not received within 20 seconds."
+                    )
+                    return
             else:
                 # Nach dem Handshake offenbleiben, ohne dessen 20-Sekunden-Frist.
                 data = await reader.readline()
@@ -49,23 +75,33 @@ async def handle_incoming(reader: asyncio.StreamReader,
             # jeweils return. Aktuell fehlt writer; ohne return würde msg trotz
             # Parsefehler weiterverwendet (undefiniert oder aus der vorigen Nachricht).
             if not data.endswith(b"\n"):
-                    await error_msg(errorType.INV_FORM, 
-                        "JSON string must end with new line.")
+                    await safe_send_error(
+                        writer,
+                        errorType.INV_FORM,
+                        "JSON string must end with new line."
+                    )
+                    return
             try:
                 # TODO(T1-02): Strikten JSON-Parser verwenden: NaN/Infinity über
                 # parse_constant zurückweisen und als INVALID_FORMAT behandeln.
                 # Empfangene Schlüsselreihenfolge/Leerzeichen weiter akzeptieren;
                 # eingehende Nachrichten müssen nicht kanonisch serialisiert sein.
                 # readline() puffert TCP-Fragmente und mehrere Zeilen bereits.
-                msg = json.loads(data.decode())
+                msg = json.loads(data.decode("utf-8"),
+                                 parse_constant=reject_json_constant)
                 log.info("Message from %s: %s", peer_id, msg)
-            except UnicodeDecodeError:                
-                await error_msg(errorType.INV_FORM, 
-                        "JSON string could not be decoded.")
-            except json.JSONDecodeError:                
-                await error_msg(errorType.INV_FORM, 
-                        "JSON string could not be loaded correctly.")
-                
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                ValueError
+            ) as exc:
+                log.warning("Invalid JSON from %s: %s", peer_id, exc)
+                await safe_send_error(
+                    writer,
+                    errorType.INV_FORM,
+                    "Invalid JSON."
+                )
+                return
             if not hello_received:
                 # Die Reihenfolge hängt vom Verbindungszustand ab und gehört
                 # deshalb hierher. Die Formatdetails prüft nur validate_hello().
@@ -114,6 +150,16 @@ async def handle_incoming(reader: asyncio.StreamReader,
     # vorsehen und dabei Netzwerkfehler von der Hello-Empfangsfrist unterscheiden.
     except asyncio.IncompleteReadError:
         pass
+    except ValueError as exc:
+        log.warning("Invalid message size: %s", exc)
+
+        await error_msg(
+            writer,
+            errorType.INV_FORM,
+            "Message exceeds the allowed size."
+        )
+    except OSError as exc:
+        log.warning("Network error with %s: %s", peer_id, exc)
     finally:
         # Läuft auch bei return und Exceptions. pop(..., None) ist auch dann
         # sicher, wenn der Eintrag bereits entfernt wurde.
@@ -138,27 +184,43 @@ async def connect_to_peer(host: str, port: int) -> None:
         # DNS-Fehler und Timeout behandeln. Ein unerreichbarer Peer darf den Start
         # oder die Pflege anderer Verbindungen nicht aufhalten. Danach gemäß T1-07
         # aus dem bekannten Bestand entfernen, statt ihn endlos sofort neu anzuwählen.
-        reader, writer = await asyncio.open_connection(host, port)
         peer_id = f"{host}:{port}"
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=CONNECT_TIMEOUT
+        )
+
+    except (TimeoutError, OSError) as exc:
+        log.warning("Cannot connect to %s: %s", peer_id, exc)
+
+        # TODO: Mit Person 3 abstimmen:
+        # Fehlgeschlagenen Peer aus der bekannten Liste entfernen.
+        return
+    except ConnectionRefusedError:
+        log.warning("Peer %s:%d refused connection", host, port)
+        return
         # TODO(T1-09): Registrierung auf eine Stelle reduzieren. handle_incoming()
         # registriert denselben Stream erneut, ggf. mit IP statt DNS-Namen. Die
         # ursprüngliche Zieladresse separat an den gemeinsamen Handler übergeben,
         # damit Cleanup und Entfernen aus known_peers dieselbe Verbindung betreffen.
-        peers[peer_id] = Peer(host, port, writer)
-        log.info("[→] Connected to %s", peer_id)
+    peers[peer_id] = Peer(host, port, writer)
+    log.info("[→] Connected to %s", peer_id)
 
-        # TODO(T1-09): Hintergrundtasks in einer Sammlung halten, abgeschlossene
-        # Tasks entfernen und Exceptions loggen. Beim Shutdown verbleibende Tasks
-        # abbrechen/abwarten; eingehende Handler dabei ebenfalls berücksichtigen.
-        asyncio.create_task(handle_incoming(reader, writer))
-    except ConnectionRefusedError:
-        log.warning("Peer %s:%d refused connection", host, port)
+    # TODO(T1-09): Hintergrundtasks in einer Sammlung halten, abgeschlossene
+    # Tasks entfernen und Exceptions loggen. Beim Shutdown verbleibende Tasks
+    # abbrechen/abwarten; eingehende Handler dabei ebenfalls berücksichtigen.
+    # asyncio.create_task(handle_incoming(reader, writer))
+    await handle_incoming(
+        reader,
+        writer,
+        outbound_address=address
+    )
 
 async def main(listen_port: int, known_peers: list[tuple[str, int]]) -> None:
     server = await asyncio.start_server(
         # TODO(T1-10): Hier und im folgenden Log PORT durch listen_port ersetzen.
         # Container muss auf 0.0.0.0:18018 lauschen (Konfiguration siehe config.py).
-        handle_incoming, HOST, PORT
+        handle_incoming, HOST, PORT, limit=MAX_LINE_BYTES
     )
     log.info("P2P node listening on %s:%d", HOST, PORT)
 
