@@ -104,9 +104,6 @@ class Peer:
     writer: asyncio.StreamWriter
 
 peers: dict[str, Peer] = {}   # "host:port" → Peer
-# TODO(T1-07): Aktive Verbindungen und bekannte Listening-Adressen getrennt halten.
-# Den persistenten Adressbestand über peer_manager verwalten; StreamWriter und
-# eingehende TCP-Quellports gehören nicht in diesen Bestand.
 
 async def handle_incoming(reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter,
@@ -147,10 +144,6 @@ async def handle_incoming(reader: asyncio.StreamReader,
             if not data:
                 # b"" bedeutet normales Verbindungsende, keinen Handshake-Fehler.
                 return
-            # TODO(T1-01): Die drei Empfangsfehler unten korrekt abschließen:
-            # error_msg(writer, errorType.INV_FORM, begruendung) aufrufen und danach
-            # jeweils return. Aktuell fehlt writer; ohne return würde msg trotz
-            # Parsefehler weiterverwendet (undefiniert oder aus der vorigen Nachricht).
             if not data.endswith(b"\n"):
                     await safe_send_error(
                         writer,
@@ -159,11 +152,6 @@ async def handle_incoming(reader: asyncio.StreamReader,
                     )
                     return
             try:
-                # TODO(T1-02): Strikten JSON-Parser verwenden: NaN/Infinity über
-                # parse_constant zurückweisen und als INVALID_FORMAT behandeln.
-                # Empfangene Schlüsselreihenfolge/Leerzeichen weiter akzeptieren;
-                # eingehende Nachrichten müssen nicht kanonisch serialisiert sein.
-                # readline() puffert TCP-Fragmente und mehrere Zeilen bereits.
                 msg = json.loads(data.decode("utf-8"),
                                  parse_constant=reject_json_constant)
                 log.info("Message from %s: %s", peer_id, msg)
@@ -198,23 +186,11 @@ async def handle_incoming(reader: asyncio.StreamReader,
             if isinstance(msg, dict) and msg.get("type") == "hello":
                 await safe_send_error(writer, errorType.INV_HANDS, "Received a second hello after the handshake.")
                 return
-            # TODO(T1-04): Gemeinsame Nachrichtenvalidierung aus protocol aufrufen:
-            # JSON-Objekt, type als String, bekannter Typ; getpeers/peers vollständig
-            # prüfen. Bei INVALID_FORMAT antworten und return. Hello-Formatprüfung
-            # und Handshake-Zustand nicht in diesen neuen Dispatcher duplizieren.
-            # Andere bekannte Typen (z.B. getchaintip/object) nach dem Handshake
-            # für Task 1 weiter ignorieren; keine Blockchain-Validierung ergänzen.
-            # Empfangene error-Nachrichten höchstens loggen, keine Antwortschleife.
+            
             if not validate_message(msg):
                 await safe_send_error(writer, errorType.INV_FORM, "Invalid message format.")
                 return
 
-            # TODO(T1-05): Gültiges getpeers nur diesem writer mit peers beantworten.
-            # Eigene konfigurierte Listening-Adresse zuerst, insgesamt <=30 Einträge
-            # inklusive eigener Adresse. Deduplizieren und für größere Bestände eine
-            # Auswahlregel festlegen (z.B. zufällige Auswahl der übrigen Plätze).
-            # Bei kleinem Bestand alle passenden bekannten Adressen weitergeben;
-            # nie die ephemeren Quellports aus dem aktiven peers-Dictionary anbieten.
             if msg["type"] == "getpeers":
                 if PUBLIC_HOST is not None:
                     my_address = f"{PUBLIC_HOST}:{PORT}"
@@ -229,25 +205,10 @@ async def handle_incoming(reader: asyncio.StreamReader,
                     "peers": all_peers[:30]  # Limit to 30 entries 
                 }
                 await sendMessage(writer, response)
-            
-            # TODO(T1-06): Gültige peers-Nachricht vollständig validieren, dann den
-            # Adressbestand aktualisieren und persistieren (T1-07). Auch freiwillig
-            # gesendete peers verarbeiten. Bei einem ungültigen Eintrag nichts
-            # übernehmen: INVALID_FORMAT senden, Verbindung schließen.
+
             if msg["type"] == "peers":
                 await peer_manager.add_and_save(msg["peers"])
 
-
-    # TODO(T1-03): TimeoutError abfangen: INVALID_HANDSHAKE mit Erklärung senden,
-    # danach Handler beenden. Die Deadline/Abschaltung ist vorhanden; die Antwort
-    # fehlt noch. TimeoutError vor OSError behandeln, da es davon abgeleitet ist.
-    # TODO(T1-02): ValueError von readline() bei überschrittenem Zeilenlimit mit
-    # INVALID_FORMAT beantworten und beenden. Das Limit explizit festlegen und für
-    # gültige Task-1-Nachrichten ausreichend wählen; unbegrenzt puffern vermeiden.
-    # TODO(T1-03): ConnectionError/OSError beim Lesen und Senden abfangen/loggen.
-    # Auch drain() einer Fehlerantwort kann scheitern; Cleanup muss trotzdem laufen.
-    # Für Sendepuffer bei nicht lesenden Clients ein begrenztes Schreib-Timeout
-    # vorsehen und dabei Netzwerkfehler von der Hello-Empfangsfrist unterscheiden.
     except asyncio.IncompleteReadError:
         pass
     except ValueError as exc:
@@ -265,11 +226,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
         # sicher, wenn der Eintrag bereits entfernt wurde.
         if peer_id in peers and peers[peer_id].writer is writer:
             peers.pop(peer_id, None)
-        # TODO(T1-07): Bei fehlerhaften/offline AUSGEHENDEN Peers zusätzlich die
-        # ursprünglich kontaktierte Adresse aus dem bekannten Bestand entfernen
-        # und speichern. Bei eingehenden Peers keine Listening-Adresse aus addr,
-        # agent oder dem ersten peers-Eintrag erraten. Keine dauerhafte Sperrliste:
-        # erneute eingehende Verbindung und spätere Neuentdeckung zulassen.
+            
         writer.close()
         try:
             await asyncio.wait_for(writer.wait_closed(),timeout=3)

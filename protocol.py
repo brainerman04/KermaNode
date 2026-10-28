@@ -4,22 +4,6 @@ import re
 from config import errorType
 import ipaddress
 
-# TODO(T1-04): Validatoren für Task-1-Nachrichten ergänzen und aus network aufrufen.
-# Basis: dict, type als String, bekannter Nachrichtentyp. getpeers hat exakt {type};
-# peers exakt {type, peers}, wobei peers eine Liste mit 0..30 Strings sein muss.
-# Fehlende/zusätzliche Schlüssel und falsche Datentypen -> INVALID_FORMAT.
-# Für andere bekannte Typen verlangt Task 1 keine vollständige Inhaltsprüfung;
-# nach erfolgreichem Handshake darf deren Empfang die Verbindung nicht schließen.
-# TODO(T1-04): Adressvalidator ergänzen: host:port, ASCII-Dezimalport 1..65535.
-# Host ist eine öffentliche IPv4-Adresse oder ein DNS-Name nach Kerma-Regeln.
-# IPv4 z.B. mit ipaddress.IPv4Address prüfen; private/Loopback/Link-local sowie
-# sonstige nicht öffentliche Adressen ausschließen. Keine IPv6-Adressen zulassen.
-# DNS: fullmatch(r"[a-zA-Z0-9._-]{3,50}", host), mindestens ein ASCII-Buchstabe
-# und mindestens ein Punkt im Inneren. Keine strengeren DNS-Regeln voraussetzen
-# und zur reinen Formatprüfung keinen DNS-Lookup erzwingen. Erst die gesamte
-# peers-Liste validieren, dann übernehmen. Grenzfälle stehen in tests/test_hello.py.
-
-
 async def sendMessage(writer: asyncio.StreamWriter, message: dict) -> None:
     """Send exactly one newline-delimited JSON message to this writer."""
     # Gemeinsamer Encoder für Nachrichten und Fehler; genau eine JSON-Zeile je Aufruf.
