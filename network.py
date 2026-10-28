@@ -112,7 +112,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
     # Jede Verbindung hat ihre eigene Deadline und ihren eigenen Handshake-Zustand.
     deadline = time.monotonic() + 20
     hello_received = False
-    answer_hello = {"type":"hello","version":"0.10.0","agent":"SuperCoolNodeTeam08"}
+    answer_hello = {"type":"hello","version":"0.10.0","agent":"Alzheda"}
     getpeers = {"type": "getpeers"}
     addr = writer.get_extra_info("peername")
     peer_id = outbound_address or f"{addr[0]}:{addr[1]}"
@@ -226,7 +226,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
         # sicher, wenn der Eintrag bereits entfernt wurde.
         if peer_id in peers and peers[peer_id].writer is writer:
             peers.pop(peer_id, None)
-            
+
         writer.close()
         try:
             await asyncio.wait_for(writer.wait_closed(),timeout=3)
