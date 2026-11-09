@@ -14,7 +14,6 @@ async def sendMessage(writer: asyncio.StreamWriter, message: dict) -> None:
         timeout=3
     )
 
-
 async def validate_hello(msg: object, writer: asyncio.StreamWriter) -> bool:
     """Validate a parsed hello; send INVALID_FORMAT and return False on failure."""
     required_keys = {"type", "version", "agent"}
@@ -57,6 +56,45 @@ async def error_msg(writer: asyncio.StreamWriter, err_type: errorType, explanati
         "name": err_type.value,
         "msg": explanation,
     })
+
+def object_exchange_format_error(msg: object) -> str | None:
+    if not isinstance(msg, dict) or msg.get("type") not in (
+        "ihaveobject", "getobject", "object"
+    ):
+        return None
+
+    message_type = msg["type"]
+    payload_key = "object" if message_type == "object" else "objectid"
+    required_keys = {"type", payload_key}
+    if required_keys - set(msg):
+        return f"{message_type} message is missing required field '{payload_key}'."
+    if set(msg) - required_keys:
+        return (
+            f"{message_type} message must only contain 'type' and '{payload_key}'; "
+            "additional fields are not allowed."
+        )
+
+    payload = msg[payload_key]
+    if message_type != "object":
+        if not isinstance(payload, str):
+            return f"{message_type} field 'objectid' must be a string."
+        if re.fullmatch(r"[0-9a-f]{64}", payload) is None:
+            return (
+                f"{message_type} field 'objectid' must contain exactly 64 "
+                "lowercase hexadecimal characters (0-9, a-f)."
+            )
+    else:
+        if not isinstance(payload, dict):
+            return "object field 'object' must be a JSON object."
+        if "type" not in payload:
+            return "object payload is missing required field 'type'."
+        if not isinstance(payload["type"], str):
+            return "object payload field 'type' must be a string."
+        if payload["type"] != "transaction":
+            return "object payload field 'type' must equal 'transaction' for Task 2."
+
+    return None
+
 
 def validate_message(msg: object) -> bool:
     if not isinstance(msg, dict):
@@ -105,6 +143,10 @@ def validate_message(msg: object) -> bool:
 
             if not validate_peer_address(peer):
                 return False
+
+    if msg["type"] in ("ihaveobject", "getobject", "object"):
+        return object_exchange_format_error(msg) is None
+
     return True
 
 def validate_peer_address(address: str) -> bool:
@@ -154,3 +196,34 @@ def validate_peer_address(address: str) -> bool:
             return True
 
     return False
+
+class ObjectValidationError(Exception):
+    # Ablehnung durch den Transaktionsprüfer, mit Angabe des Kerma-Fehlers und einer Erläuterung.
+
+    def __init__(self, error_type: errorType, explanation: str):
+        super().__init__(explanation)
+        self.error_type = error_type
+        self.explanation = explanation
+
+
+def validate_object(obj: dict, object_store) -> None:
+    """Schnittstelle fuer die Transaktionsvalidierung des Teamkollegen.
+
+    TODO: Hier normale UND Coinbase-Transaktionen pruefen oder an das kuenftige
+    Transaktionsmodul delegieren. Die Nachrichtenhuelle ist bereits geprueft;
+    die Transaktionsfelder und ihre Semantik sind es ausdruecklich noch nicht.
+
+    Vertrag (synchron, kein Netzwerk-I/O, keine Mutation von obj oder Store):
+    - Gueltig: normal mit None zurueckkehren (kein bool-Ergebnis).
+    - Ungueltig: ObjectValidationError(errorType.INV_FORM / INV_TX_SIG /
+      INV_TX_OUT / INV_TX_CON, konkrete_erklaerung) ausloesen.
+    - Fehlende Referenz: ObjectValidationError(errorType.UNKNOWN_OBJ,
+      konkrete_erklaerung) ausloesen. Netzwerk laesst die Verbindung dann offen.
+    Referenzierte Transaktionen ueber object_store.get_object(txid) nachschlagen.
+
+    Bis zur Implementierung bleibt NotImplementedError bestehen: Netzwerk loggt
+    die lokale Luecke, speichert/gossipet nichts und beschuldigt den Peer nicht.
+    Nicht durch ein bedingungsloses return ersetzen; das akzeptiert ungepruefte
+    Transaktionen. Tests ersetzen diese Schnittstelle gezielt durch Test-Doubles.
+    """
+    raise NotImplementedError("Transaction validation has not been implemented yet.")

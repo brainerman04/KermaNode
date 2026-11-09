@@ -3,7 +3,9 @@ import json
 import logging
 import time
 from config import HOST, PORT, MAX_LINE_BYTES, CONNECT_TIMEOUT, errorType, PUBLIC_HOST, RECONNECT_INTERVAL, OUTBOUND_TARGET
-from protocol import error_msg, sendMessage, validate_hello, validate_message
+from object_hash import calculate_objectid
+from object_store import ObjectStore
+from protocol import ObjectValidationError, error_msg, object_exchange_format_error, sendMessage, validate_hello, validate_message, validate_object
 from dataclasses import dataclass
 from peer_manager import PeerManager
 
@@ -46,7 +48,8 @@ def on_outgoing_done(
 async def maintain_outgoing(
     peer_manager: PeerManager,
     listen_port: int,
-    running: dict[str, asyncio.Task]
+    running: dict[str, asyncio.Task],
+    object_store: ObjectStore
 ) -> None:
 
     # Eigene veröffentlichte Adresse nicht anwählen
@@ -81,7 +84,7 @@ async def maintain_outgoing(
 
             # Ausgehende Verbindung parallel starten
             task = asyncio.create_task(
-                connect_to_peer(host, port, peer_manager),
+                connect_to_peer(host, port, peer_manager, object_store),
                 name=f"outbound:{address}"
             )
 
@@ -105,9 +108,62 @@ class Peer:
 
 peers: dict[str, Peer] = {}   # "host:port" → Peer
 
+async def broadcast_ihaveobject(objectid: str) -> None:
+    # ihaveobject Nachricht an bestehende, sowie handshaken Verbindungen und an den Sender selbst
+    async def send_to_peer(peer):
+        try:
+            await sendMessage(peer.writer, {"type": "ihaveobject", "objectid": objectid})
+        except (OSError, TimeoutError):
+            log.warning("Gossip delivery failed to %s:%s", peer.host, peer.port)
+            peer.writer.close()
+
+    # Snapshot verhindert Änderungen am Wörterbuch während await; Übertragungsfehler werden isoliert --> KI Verbesserungsvorschlag
+    await asyncio.gather(*(send_to_peer(peer) for peer in list(peers.values())))
+
+
+async def handle_ihaveobject(msg, writer, object_store: ObjectStore) -> None:
+    # Wenn das Objekt nicht bekannt ist, eine getobject-Nachricht an den Peer senden
+    if not object_store.has_object(msg["objectid"]):
+        await sendMessage(writer, {"type": "getobject", "objectid": msg["objectid"]})
+
+
+async def handle_getobject(msg, writer, object_store: ObjectStore) -> None:
+    # Wenn das angefragte Objekt bekannt ist -> object-Nachricht an den Peer senden
+    obj = object_store.get_object(msg["objectid"])
+    if obj is None:
+        await safe_send_error(writer, errorType.UNKNOWN_OBJ,
+                              f"Requested object {msg['objectid']} is not known.")
+    else:
+        await sendMessage(writer, {"type": "object", "object": obj})
+
+
+async def handle_object(msg, writer, object_store: ObjectStore) -> bool:
+    # Wenn das Objekt nicht bekannt ist, validieren und speichern; ansonsten ignorieren
+    # TODO: Kommentar aktualisieren, sobald die Validierung implementiert ist
+    obj = msg["object"]
+    objectid = calculate_objectid(obj)
+    if object_store.has_object(objectid):
+        return True
+    try:
+        validate_object(obj, object_store)
+    except ObjectValidationError as exc:
+        await safe_send_error(writer, exc.error_type, exc.explanation)
+        return exc.error_type == errorType.UNKNOWN_OBJ
+    except NotImplementedError:
+        # TODO: Zhe: Transaction validation ist noch nicht implementiert, das sollte im protocol.py noch erledigt 
+        # werden, ich hoffe du kennst dich mit der Schnittstellenbesschreibung aus -> protocol.py:209
+        log.error("Cannot accept object %s: transaction validator is not implemented.", objectid)
+        return True
+
+    if await object_store.add_and_save_if_new(obj):
+        await broadcast_ihaveobject(objectid)
+    return True
+
+
 async def handle_incoming(reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter,
                            peer_manager: PeerManager,
+                           object_store: ObjectStore,
                            outbound_address: str | None = None) -> None:
     # Jede Verbindung hat ihre eigene Deadline und ihren eigenen Handshake-Zustand.
     deadline = time.monotonic() + 20
@@ -117,7 +173,6 @@ async def handle_incoming(reader: asyncio.StreamReader,
     addr = writer.get_extra_info("peername")
     peer_id = outbound_address or f"{addr[0]}:{addr[1]}"
     log.info("[+] Incoming peer: %s", peer_id)
-    peers[peer_id] = Peer(addr[0], addr[1], writer)
 
     try:
         await sendMessage(writer, answer_hello)
@@ -181,6 +236,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
                     # return beendet den Handler; finally schließt die Verbindung.
                     return
                 hello_received = True
+                peers[peer_id] = Peer(addr[0], addr[1], writer)
                 continue
 
             if isinstance(msg, dict) and msg.get("type") == "hello":
@@ -188,7 +244,8 @@ async def handle_incoming(reader: asyncio.StreamReader,
                 return
             
             if not validate_message(msg):
-                await safe_send_error(writer, errorType.INV_FORM, "Invalid message format.")
+                explanation = object_exchange_format_error(msg) or "Invalid message format."
+                await safe_send_error(writer, errorType.INV_FORM, explanation)
                 return
 
             if msg["type"] == "getpeers":
@@ -209,6 +266,16 @@ async def handle_incoming(reader: asyncio.StreamReader,
             if msg["type"] == "peers":
                 await peer_manager.add_and_save(msg["peers"])
 
+            if msg["type"] == "ihaveobject":
+                await handle_ihaveobject(msg, writer, object_store)
+
+            if msg["type"] == "object":
+                if not await handle_object(msg, writer, object_store):
+                    return
+
+            if msg["type"] == "getobject":
+                await handle_getobject(msg, writer, object_store)
+
     except asyncio.IncompleteReadError:
         pass
     except ValueError as exc:
@@ -219,7 +286,7 @@ async def handle_incoming(reader: asyncio.StreamReader,
             errorType.INV_FORM,
             "Message exceeds the allowed size."
         )
-    except OSError as exc:
+    except (OSError, TimeoutError) as exc:
         log.warning("Network error with %s: %s", peer_id, exc)
     finally:
         # Läuft auch bei return und Exceptions. pop(..., None) ist auch dann
@@ -238,7 +305,8 @@ async def handle_incoming(reader: asyncio.StreamReader,
 async def connect_to_peer(
     host: str,
     port: int,
-    peer_manager: PeerManager
+    peer_manager: PeerManager,
+    object_store: ObjectStore
 ) -> None:
     address = f"{host}:{port}"
 
@@ -268,6 +336,7 @@ async def connect_to_peer(
             reader,
             writer,
             peer_manager,
+            object_store,
             outbound_address=address
         )
 
@@ -282,7 +351,8 @@ async def connect_to_peer(
 
 async def main(
     listen_port: int,
-    peer_manager: PeerManager
+    peer_manager: PeerManager,
+    object_store: ObjectStore
 ) -> None:
 
     running_outbound: dict[str, asyncio.Task] = {}
@@ -299,7 +369,8 @@ async def main(
             await handle_incoming(
                 reader,
                 writer,
-                peer_manager
+                peer_manager,
+                object_store
             )
         finally:
             if task is not None:
@@ -324,7 +395,8 @@ async def main(
         maintain_outgoing(
             peer_manager,
             listen_port,
-            running_outbound
+            running_outbound,
+            object_store
         ),
         name="maintain-outgoing"
     )

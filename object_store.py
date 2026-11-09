@@ -28,7 +28,20 @@ class ObjectStore:
             await asyncio.to_thread(self.save)
             return objectid
 
-    def save(self):
+    async def add_and_save_if_new(self, obj) -> bool:
+        """Atomically deduplicate concurrent receipts; publish only after saving."""
+        objectid = object_hash.calculate_objectid(obj)
+        async with self.lock:
+            if objectid in self.objects:
+                return False
+            # Persist a snapshot first so failed writes never expose a new object.
+            snapshot = dict(self.objects)
+            snapshot[objectid] = obj
+            await asyncio.to_thread(self.save, snapshot)
+            self.objects[objectid] = obj
+            return True
+
+    def save(self, snapshot=None):
         path = Path(self.file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +49,7 @@ class ObjectStore:
         try:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
                 temp_path = file.name
-                json.dump(self.objects, file)
+                json.dump(self.objects if snapshot is None else snapshot, file)
                 file.flush()
                 os.fsync(file.fileno())
 

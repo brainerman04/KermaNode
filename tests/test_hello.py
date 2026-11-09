@@ -3,6 +3,8 @@ import unittest
 
 import network
 from config import errorType
+from object_store import ObjectStore
+from peer_manager import PeerManager
 from protocol import error_msg, validate_hello
 
 # TODO(T1-13): TCP-Integrationstests ergänzen; die vorhandenen Fakes prüfen keinen
@@ -145,7 +147,7 @@ class HelloTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_hello_stops_handler_and_cleans_up(self):
         writer = FakeWriter()
         reader = FakeReader([hello(agent="bad\nagent"), hello()], writer)
-        await network.handle_incoming(reader, writer)
+        await network.handle_incoming(reader, writer, PeerManager(), ObjectStore())
         self.assertEqual(reader.read_count, 1)
         messages = writer.messages()
         self.assertEqual([message["type"] for message in messages], ["hello", "getpeers", "error"])
@@ -156,7 +158,7 @@ class HelloTests(unittest.IsolatedAsyncioTestCase):
     async def test_success_keeps_reading_until_peer_disconnects(self):
         writer = FakeWriter()
         reader = FakeReader([hello(), {"type": "getchaintip"}], writer)
-        await network.handle_incoming(reader, writer)
+        await network.handle_incoming(reader, writer, PeerManager(), ObjectStore())
         self.assertEqual(reader.read_count, 3)
         self.assertFalse(any(reader.closed_while_reading))
         self.assertEqual([message["type"] for message in writer.messages()], ["hello", "getpeers"])
@@ -166,7 +168,7 @@ class HelloTests(unittest.IsolatedAsyncioTestCase):
     async def test_message_before_hello_is_handshake_error(self):
         writer = FakeWriter()
         reader = FakeReader([{"type": "getpeers"}], writer)
-        await network.handle_incoming(reader, writer)
+        await network.handle_incoming(reader, writer, PeerManager(), ObjectStore())
         self.assertEqual(writer.messages()[-1]["name"], "INVALID_HANDSHAKE")
         self.assertTrue(writer.closed)
         self.assertEqual(network.peers, {})
@@ -174,7 +176,7 @@ class HelloTests(unittest.IsolatedAsyncioTestCase):
     async def test_second_hello_is_handshake_error(self):
         writer = FakeWriter()
         reader = FakeReader([hello(), hello()], writer)
-        await network.handle_incoming(reader, writer)
+        await network.handle_incoming(reader, writer, PeerManager(), ObjectStore())
         self.assertEqual(writer.messages()[-1]["name"], "INVALID_HANDSHAKE")
         self.assertTrue(writer.closed)
         self.assertEqual(network.peers, {})

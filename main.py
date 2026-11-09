@@ -28,4 +28,4 @@ if __name__ == "__main__":
 
     # Netzwerk starten
     # TODO: ObjectStore später an network.main() übergeben
-    asyncio.run(network.main(PORT, peer_manager))
+    asyncio.run(network.main(PORT, peer_manager, object_store))
