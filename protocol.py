@@ -207,23 +207,6 @@ class ObjectValidationError(Exception):
 
 
 def validate_object(obj: dict, object_store) -> None:
-    """Schnittstelle fuer die Transaktionsvalidierung des Teamkollegen.
-
-    TODO: Hier normale UND Coinbase-Transaktionen pruefen oder an das kuenftige
-    Transaktionsmodul delegieren. Die Nachrichtenhuelle ist bereits geprueft;
-    die Transaktionsfelder und ihre Semantik sind es ausdruecklich noch nicht.
-
-    Vertrag (synchron, kein Netzwerk-I/O, keine Mutation von obj oder Store):
-    - Gueltig: normal mit None zurueckkehren (kein bool-Ergebnis).
-    - Ungueltig: ObjectValidationError(errorType.INV_FORM / INV_TX_SIG /
-      INV_TX_OUT / INV_TX_CON, konkrete_erklaerung) ausloesen.
-    - Fehlende Referenz: ObjectValidationError(errorType.UNKNOWN_OBJ,
-      konkrete_erklaerung) ausloesen. Netzwerk laesst die Verbindung dann offen.
-    Referenzierte Transaktionen ueber object_store.get_object(txid) nachschlagen.
-
-    Bis zur Implementierung bleibt NotImplementedError bestehen: Netzwerk loggt
-    die lokale Luecke, speichert/gossipet nichts und beschuldigt den Peer nicht.
-    Nicht durch ein bedingungsloses return ersetzen; das akzeptiert ungepruefte
-    Transaktionen. Tests ersetzen diese Schnittstelle gezielt durch Test-Doubles.
-    """
-    raise NotImplementedError("Transaction validation has not been implemented yet.")
+    from transaction import TransactionValidator
+    TransactionValidator().validate(obj, object_store)
+    
