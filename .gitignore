@@ -1,1 +1,8 @@
 kerma-task1.tar
+TASK2_REVIEW.md
+tests/test_task2_audit.py
+__pycache__/config.cpython-311.pyc
+__pycache__/protocol.cpython-311.pyc
+__pycache__/transaction.cpython-311.pyc
+tests/__pycache__/test_block.cpython-311.pyc
+tests/__pycache__/test_transaction.cpython-311.pyc
