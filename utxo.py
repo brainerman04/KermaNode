@@ -59,15 +59,16 @@ def execute_transaction(utxo, transaction, coinbase_txid, object_store):
         total_input_value += utxo[key]["value"]
         spent_outpoints.add(key)
 
-        for output in transaction["outputs"]:
-            total_output_value += output["value"]
+    for output in transaction["outputs"]:
+        total_output_value += output["value"]
 
-        fee = total_input_value - total_output_value
+    fee = total_input_value - total_output_value
 
-        for key in spent_outpoints:
-            del utxo[key]
+    for key in spent_outpoints:
+        del utxo[key]
 
-        for index, output in enumerate(transaction["outputs"]):
-            utxo[(txid, index)] = deepcopy(output)
+    for index, output in enumerate(transaction["outputs"]):
+        utxo[(txid, index)] = deepcopy(output)
 
-        return fee    
+
+    return fee    
