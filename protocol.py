@@ -90,8 +90,8 @@ def object_exchange_format_error(msg: object) -> str | None:
             return "object payload is missing required field 'type'."
         if not isinstance(payload["type"], str):
             return "object payload field 'type' must be a string."
-        if payload["type"] != "transaction":
-            return "object payload field 'type' must equal 'transaction' for Task 2."
+        if payload["type"] not in ("transaction", "block"):
+            return "object payload field 'type' must be 'transaction' or 'block'."
 
     return None
 

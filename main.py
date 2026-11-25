@@ -6,6 +6,8 @@ import network
 from config import *
 from peer_manager import PeerManager
 from object_store import ObjectStore
+from genesis import GENESIS_BLOCK
+from object_hash import calculate_objectid
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,6 +24,12 @@ if __name__ == "__main__":
 
     # Gespeicherte Objects laden
     object_store.load()
+
+    # Task 3: Genesis is known from the start, but no other blocks/transactions.
+    if calculate_objectid(GENESIS_BLOCK) != GEN_BLOCK_ID:
+        raise RuntimeError("Genesis hash does not match GEN_BLOCK_ID")
+    if not object_store.has_object(GEN_BLOCK_ID):
+        object_store.add_object(GENESIS_BLOCK)
 
     # Bootstrap-Adressen einmal beim Start hinzufügen
     peer_manager.add_peers(BOOTSTRAP_PEERS)

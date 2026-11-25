@@ -230,4 +230,4 @@ class EnvelopeTests(unittest.TestCase):
                 self.assertFalse(validate_message(msg))
                 self.assertIsNotNone(object_exchange_format_error(msg))
         self.assertTrue(validate_message({"type":"object", "object":{"type":"transaction"}}))
-        self.assertFalse(validate_message({"type":"object", "object":{"type":"block"}}))
+        self.assertTrue(validate_message({"type":"object", "object":{"type":"block"}}))

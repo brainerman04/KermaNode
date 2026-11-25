@@ -8,6 +8,7 @@ from object_store import ObjectStore
 from protocol import ObjectValidationError, error_msg, object_exchange_format_error, sendMessage, validate_hello, validate_message, validate_object
 from dataclasses import dataclass
 from peer_manager import PeerManager
+from block_processing import BlockProcessor
 
 log = logging.getLogger(__name__)
 
@@ -121,6 +122,21 @@ async def broadcast_ihaveobject(objectid: str) -> None:
     await asyncio.gather(*(send_to_peer(peer) for peer in list(peers.values())))
 
 
+
+def get_block_processor(object_store: ObjectStore) -> BlockProcessor:
+    """One shared processor per node, for both inbound and outbound peers."""
+    processor = getattr(object_store, "block_processor", None)
+    if processor is None:
+        processor = BlockProcessor(
+            object_store,
+            broadcast_ihaveobject,
+            safe_send_error,
+            lambda: [peer.writer for peer in peers.values()],
+        )
+        object_store.block_processor = processor
+    return processor
+
+
 async def handle_ihaveobject(msg, writer, object_store: ObjectStore) -> None:
     # Wenn das Objekt nicht bekannt ist, eine getobject-Nachricht an den Peer senden
     if not object_store.has_object(msg["objectid"]):
@@ -138,27 +154,34 @@ async def handle_getobject(msg, writer, object_store: ObjectStore) -> None:
 
 
 async def handle_object(msg, writer, object_store: ObjectStore) -> bool:
-    # Wenn das Objekt nicht bekannt ist, validieren und speichern; ansonsten ignorieren
-    # TODO: Kommentar aktualisieren, sobald die Validierung implementiert ist
+    """Task 2 transactions + Task 3 blocks, sharing one object database."""
     obj = msg["object"]
     objectid = calculate_objectid(obj)
     if object_store.has_object(objectid):
         return True
+
+    if obj["type"] == "block":
+        return await get_block_processor(object_store).receive_block(obj, writer)
+
+    # Transaction path from Task 2: validate before storing or gossiping.
     try:
         validate_object(obj, object_store)
     except ObjectValidationError as exc:
+        processor = getattr(object_store, "block_processor", None)
+        if processor is not None:
+            await processor.transaction_rejected(objectid, exc.error_type)
         await safe_send_error(writer, exc.error_type, exc.explanation)
         return exc.error_type == errorType.UNKNOWN_OBJ
     except NotImplementedError:
-        # TODO: Zhe: Transaction validation ist noch nicht implementiert, das sollte im protocol.py noch erledigt 
-        # werden, ich hoffe du kennst dich mit der Schnittstellenbesschreibung aus -> protocol.py:209
-        log.error("Cannot accept object %s: transaction validator is not implemented.", objectid)
+        log.error("Transaction validator is not implemented for object %s",objectid)
         return True
 
     if await object_store.add_and_save_if_new(obj):
         await broadcast_ihaveobject(objectid)
+        processor = getattr(object_store, "block_processor", None)
+        if processor is not None:
+            processor.transaction_received(objectid)
     return True
-
 
 async def handle_incoming(reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter,
@@ -429,3 +452,7 @@ async def main(
                 *all_tasks,
                 return_exceptions=True
             )
+
+        processor = getattr(object_store, "block_processor", None)
+        if processor is not None:
+            await processor.close()

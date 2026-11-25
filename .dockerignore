@@ -4,3 +4,5 @@ __pycache__
 *.pyc
 .venv
 peers.json
+objects.json
+.task3_backup

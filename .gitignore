@@ -6,3 +6,11 @@ __pycache__/protocol.cpython-311.pyc
 __pycache__/transaction.cpython-311.pyc
 tests/__pycache__/test_block.cpython-311.pyc
 tests/__pycache__/test_transaction.cpython-311.pyc
+
+.task3_backup/
+
+objects.json
+
+__pycache__/
+
+*.pyc
